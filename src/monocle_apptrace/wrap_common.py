@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 from numpy.ma.core import MaskError
 from onnxruntime.transformers.models.gpt2.parity_check_helper import inference
 from opentelemetry.trace import Span, Tracer
+from monocle_apptrace.utils import resolve_from_alias, update_span_with_infra_name, with_tracer_wrapper, get_embedding_model
+
 from monocle_apptrace.utils import resolve_from_alias, update_span_with_infra_name, with_tracer_wrapper,get_embedding_model
 from sqlalchemy.sql.functions import current_user
 from monocle_apptrace.metamodel.Inference_Base import Inference
@@ -21,6 +23,9 @@ RESPONSE = "response"
 TAGS = "tags"
 SESSION_PROPERTIES_KEY = "session"
 INFRA_SERVICE_KEY = "infra_service_name"
+TYPE = "type"
+PROVIDER = "provider_name"
+EMBEDDING_MODEL = "embedding_model"
 VECTOR_STORE = 'vector_store'
 
 
@@ -47,6 +52,7 @@ framework_vector_store_mapping = {
         'type': VECTOR_STORE,
     },
 }
+
 @with_tracer_wrapper
 def task_wrapper(tracer: Tracer, to_wrap, wrapped, instance, args, kwargs):
     """Instruments and calls every function defined in TO_WRAP."""
@@ -77,7 +83,6 @@ def post_task_processing(to_wrap, span, return_value):
         span.set_attribute("workflow_name",workflow_name)
         update_span_with_prompt_output(to_wrap=to_wrap, wrapped_args=return_value, span=span)
         update_workflow_type(to_wrap, span)
-
 
 def pre_task_processing(to_wrap, instance, args, span):
     if is_root_span(span):
@@ -167,6 +172,26 @@ def llm_wrapper(tracer: Tracer, to_wrap, wrapped, instance, args, kwargs):
 
     return return_value
 
+def update_llm_endpoint(curr_span: Span, instance):
+    triton_llm_endpoint = os.environ.get("TRITON_LLM_ENDPOINT")
+    if triton_llm_endpoint is not None and len(triton_llm_endpoint) > 0:
+        curr_span.set_attribute("server_url", triton_llm_endpoint)
+    else:
+        if 'temperature' in instance.__dict__:
+            temp_val = instance.__dict__.get("temperature")
+            curr_span.set_attribute("temperature", temp_val)
+            # handling for model name
+        model_name = resolve_from_alias(instance.__dict__ , ["model","model_name"])
+        curr_span.set_attribute("model_name", model_name)
+        set_provider_name(curr_span, instance)
+        # handling AzureOpenAI deployment
+        deployment_name = resolve_from_alias(instance.__dict__ , [ "engine", "azure_deployment",
+                                                                   "deployment_name", "deployment_id", "deployment"])
+        curr_span.set_attribute("az_openai_deployment", deployment_name)
+        # handling the inference endpoint
+        inference_ep = resolve_from_alias(instance.__dict__,["azure_endpoint","api_base"])
+        curr_span.set_attribute("inference_endpoint",inference_ep)
+
 def set_provider_name(curr_span, instance):
     provider_url = ""
 
@@ -232,7 +257,6 @@ def get_input_from_args(chain_args):
     return ""
 
 def update_span_from_llm_response(response, span: Span):
-    
     # extract token uasge from langchain openai
     if (response is not None and hasattr(response, "response_metadata")):
         response_metadata = response.response_metadata
@@ -317,6 +341,7 @@ def update_tags(instance, span):
         span.set_attribute(TAGS, [model_name, vector_store_name])
     except:
         pass
+
 
 def update_vectorstore_attributes(to_wrap, instance, span):
     """
