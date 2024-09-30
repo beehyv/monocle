@@ -3,21 +3,15 @@ import logging
 import os
 from urllib.parse import urlparse
 
-from numpy.ma.core import MaskError
-from onnxruntime.transformers.models.gpt2.parity_check_helper import inference
 from opentelemetry.trace import Span, Tracer
 from monocle_apptrace.utils import resolve_from_alias, update_span_with_infra_name, with_tracer_wrapper, get_embedding_model
 
-from monocle_apptrace.utils import resolve_from_alias, update_span_with_infra_name, with_tracer_wrapper,get_embedding_model
-from sqlalchemy.sql.functions import current_user
-from monocle_apptrace.metamodel.Inference_Base import Inference
 logger = logging.getLogger(__name__)
 WORKFLOW_TYPE_KEY = "workflow_type"
-CONTEXT_INPUT_KEY = "context_input"       #data.input
-CONTEXT_OUTPUT_KEY = "context_output"     #data.output
-PROMPT_INPUT_KEY = "input"                 #data.input
-PROMPT_OUTPUT_KEY = "output"               #data.output
-META_DATA = "metadata"
+CONTEXT_INPUT_KEY = "context_input"
+CONTEXT_OUTPUT_KEY = "context_output"
+PROMPT_INPUT_KEY = "input"
+PROMPT_OUTPUT_KEY = "output"
 QUERY = "question"
 RESPONSE = "response"
 TAGS = "tags"
@@ -160,13 +154,11 @@ def llm_wrapper(tracer: Tracer, to_wrap, wrapped, instance, args, kwargs):
         name = to_wrap.get("span_name")
     else:
         name = f"langchain.task.{instance.__class__.__name__}"
-
-    inference=Inference(instance)
     with tracer.start_as_current_span(name) as span:
-        #update_llm_endpoint(curr_span= span, instance=instance)
         if 'haystack.components.retrievers' in to_wrap['package'] and 'haystack.retriever' in span.name:
             update_vectorstore_attributes(to_wrap, instance, span)
-        inference.add_entities(span)
+        update_llm_endpoint(curr_span= span, instance=instance)
+
         return_value = wrapped(*args, **kwargs)
         update_span_from_llm_response(response = return_value, span = span)
 
@@ -210,43 +202,9 @@ def set_provider_name(curr_span, instance):
     try :
         if len(provider_url) > 0:
             parsed_provider_url = urlparse(provider_url)
-            #curr_span.set_attribute("provider_name", parsed_provider_url.hostname or provider_url)
-            return parsed_provider_url or provider_url
+            curr_span.set_attribute("provider_name", parsed_provider_url.hostname or provider_url)
     except:
         pass
-
-def update_llm_endpoint(curr_span: Span, instance):
-    """
-    Update the LLM-related attributes in the span, and organize them under the Monocle entity format.
-    """
-    entity_index = 1  # Use an index to ensure we structure the entities correctly
-
-    # Collect attributes for the model entity
-    model_name = resolve_from_alias(instance.__dict__, ["model", "model_name"])
-    temperature = instance.__dict__.get("temperature", None)
-    provider_name = ""
-
-    # Handle provider URL if available
-    try:
-        provider_name = set_provider_name(curr_span,instance).hostname
-    except AttributeError:
-        pass
-
-    # Handle inference endpoint if available
-    inference_ep = resolve_from_alias(instance.__dict__, ["azure_endpoint", "api_base"])
-
-    # Organize attributes under the entity.<index> structure
-    curr_span.set_attribute(f"entity.{entity_index}.name", model_name)
-    curr_span.set_attribute(f"entity.{entity_index}.type", "LLM")  # Define it as a Model entity
-    curr_span.set_attribute(f"entity.{entity_index}.temperature", temperature)
-    curr_span.set_attribute(f"entity.{entity_index}.provider_name", provider_name)
-    curr_span.set_attribute(f"entity.{entity_index}.inference_endpoint", inference_ep)
-
-    # Increment the entity index
-    entity_index += 1
-
-
-
 
 def is_root_span(curr_span: Span) -> bool:
     return curr_span.parent is None
@@ -260,33 +218,23 @@ def update_span_from_llm_response(response, span: Span):
     # extract token uasge from langchain openai
     if (response is not None and hasattr(response, "response_metadata")):
         response_metadata = response.response_metadata
-        d={}
         token_usage = response_metadata.get("token_usage")
         if token_usage is not None:
-            #span.set_attribute("completion_tokens", token_usage.get("completion_tokens"))
-            d.update({"completion_tokens": token_usage.get("completion_tokens")})
-            #span.set_attribute("prompt_tokens", token_usage.get("prompt_tokens"))
-            d.update({"prompt_tokens": token_usage.get("prompt_tokens")})
-            #span.set_attribute("total_tokens", token_usage.get("total_tokens"))
-            d.update({"total_tokens": token_usage.get("total_tokens")})
-            span.add_event(META_DATA,d)
+            span.set_attribute("completion_tokens", token_usage.get("completion_tokens"))
+            span.set_attribute("prompt_tokens", token_usage.get("prompt_tokens"))
+            span.set_attribute("total_tokens", token_usage.get("total_tokens"))
     # extract token usage from llamaindex openai
     if(response is not None and hasattr(response, "raw")):
         try:
             if response.raw is not None:
                 token_usage = response.raw.get("usage") if isinstance(response.raw, dict) else getattr(response.raw, "usage", None)
                 if token_usage is not None:
-                    d={}
                     if getattr(token_usage, "completion_tokens", None):
-                        #span.set_attribute("completion_tokens", getattr(token_usage, "completion_tokens"))
-                        d.update({"completion_tokens": getattr(token_usage, "completion_tokens")})
+                        span.set_attribute("completion_tokens", getattr(token_usage, "completion_tokens"))
                     if getattr(token_usage, "prompt_tokens", None):
-                        #span.set_attribute("prompt_tokens", getattr(token_usage, "prompt_tokens"))
-                        d.update({"prompt_tokens": getattr(token_usage, "prompt_tokens")})
+                        span.set_attribute("prompt_tokens", getattr(token_usage, "prompt_tokens"))
                     if getattr(token_usage, "total_tokens", None):
-                        #span.set_attribute("total_tokens", getattr(token_usage, "total_tokens"))
-                        d.update({"total_tokens": getattr(token_usage, "total_tokens")})
-                    span.add_event(META_DATA,d)
+                        span.set_attribute("total_tokens", getattr(token_usage, "total_tokens"))
         except AttributeError:
             token_usage = None
 
