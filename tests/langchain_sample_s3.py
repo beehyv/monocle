@@ -1,5 +1,7 @@
 
 
+import logging
+
 import bs4
 from langchain import hub
 from langchain.chains import create_retrieval_chain
@@ -12,25 +14,25 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from monocle_apptrace.instrumentor import set_context_properties, setup_monocle_telemetry
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from langhchain_patch import create_history_aware_retriever
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
 from monocle_apptrace.exporters.aws.s3_exporter import S3SpanExporter
-import logging
+from monocle_apptrace.instrumentor import (
+    set_context_properties,
+    setup_monocle_telemetry,
+)
+
 logging.basicConfig(level=logging.INFO)
 import os
-from dotenv import load_dotenv, dotenv_values
+
+from dotenv import dotenv_values, load_dotenv
+
 load_dotenv()
-os.environ["OPENAI_API_KEY"] = ""
-os.environ['AWS_ACCESS_KEY_ID'] = ''
-os.environ['AWS_SECRET_ACCESS_KEY'] = ''
-exporter = S3SpanExporter(
-    region_name='us-east-1',
-    bucket_name='sachin-dev'
-)
+
 setup_monocle_telemetry(
             workflow_name="langchain_app_1",
-            span_processors=[BatchSpanProcessor(exporter)],
+            span_processors=[BatchSpanProcessor(ConsoleSpanExporter())],
             wrapper_methods=[])
 
 llm = ChatOpenAI(model="gpt-3.5-turbo-0125")

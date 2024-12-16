@@ -1,9 +1,7 @@
 
-from monocle_apptrace.haystack import HAYSTACK_METHODS
 from monocle_apptrace.langchain import LANGCHAIN_METHODS
-from monocle_apptrace.llamaindex import LLAMAINDEX_METHODS
-from monocle_apptrace.botocore import BOTOCORE_METHODS
 from monocle_apptrace.wrap_common import task_wrapper
+
 
 # pylint: disable=too-few-public-methods
 class WrapperMethod:
@@ -24,4 +22,4 @@ class WrapperMethod:
 
         self.wrapper = wrapper
 
-INBUILT_METHODS_LIST = LANGCHAIN_METHODS + LLAMAINDEX_METHODS + HAYSTACK_METHODS + BOTOCORE_METHODS
+INBUILT_METHODS_LIST = LANGCHAIN_METHODS

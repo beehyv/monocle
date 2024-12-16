@@ -4,7 +4,10 @@ and assistant messages from various input formats.
 """
 
 import logging
-from monocle_apptrace.utils import get_attribute
+from urllib.parse import urlparse
+
+from monocle_apptrace.utils import Option, get_attribute, try_option
+
 DATA_INPUT_KEY = "data.input"
 
 logger = logging.getLogger(__name__)
@@ -21,7 +24,7 @@ def extract_messages(args):
                 for msg in args[0].messages:
                     if hasattr(msg, 'content') and hasattr(msg, 'type'):
                         messages.append({msg.type: msg.content})
-            elif isinstance(args[0], list):  #llama
+            elif isinstance(args[0], list):  # llama
                 for msg in args[0]:
                     if hasattr(msg, 'content') and hasattr(msg, 'role'):
                         if hasattr(msg.role, 'value'):
@@ -33,7 +36,7 @@ def extract_messages(args):
                         elif msg.role in ["user", "human"]:
                             user_message = extract_query_from_content(msg.content)
                             messages.append({role: user_message})
-        return messages
+        return [str(d) for d in messages]
     except Exception as e:
         logger.warning("Warning: Error occurred in extract_messages: %s", str(e))
         return []
@@ -52,9 +55,6 @@ def extract_assistant_message(response):
             if hasattr(reply, 'content'):
                 return [reply.content]
             return [reply]
-        if isinstance(response, dict):
-            return [response]
-        return []
     except Exception as e:
         logger.warning("Warning: Error occurred in extract_assistant_message: %s", str(e))
         return []
@@ -78,3 +78,23 @@ def extract_query_from_content(content):
     except Exception as e:
         logger.warning("Warning: Error occurred in extract_query_from_content: %s", str(e))
         return ""
+
+
+
+def extract_provider_name(instance):
+    provider_url: Option[str] = try_option(getattr, instance.client._client.base_url, 'host')
+    if provider_url.is_none():
+        provider_url = try_option(getattr, instance, 'api_base').and_then(lambda url: urlparse(url).hostname)
+    
+    return provider_url.unwrap_or(None)
+
+# to be validated for non-langchain 
+def extract_inference_endpoint(instance):
+    inference_endpoint: Option[str] = try_option(getattr, instance.client._client, 'base_url').map(str)
+    if inference_endpoint.is_none():
+        inference_endpoint = try_option(getattr, instance.client.meta, 'endpoint_url').map(str)
+
+    if inference_endpoint.is_none():#for mistral API
+        inference_endpoint = try_option(getattr, instance._client.sdk_configuration, 'server_url').map(str)    
+
+    return inference_endpoint.unwrap_or(extract_provider_name(instance))

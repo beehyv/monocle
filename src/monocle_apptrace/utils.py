@@ -1,13 +1,19 @@
-import logging
+import importlib.util
 import json
-from importlib import import_module
+import logging
 import os
-from opentelemetry.trace import NonRecordingSpan,Span
-from opentelemetry.trace.propagation import _SPAN_KEY
-from opentelemetry.context import (attach, detach,get_current)
-from opentelemetry.context import attach, set_value, get_value
-from monocle_apptrace.constants import service_name_map, service_type_map
+from importlib import import_module
 from json.decoder import JSONDecodeError
+from typing import Callable, Generic, Optional, TypeVar
+
+from opentelemetry.context import attach, detach, get_current, get_value, set_value
+from opentelemetry.trace import NonRecordingSpan, Span
+from opentelemetry.trace.propagation import _SPAN_KEY
+
+from monocle_apptrace.constants import service_name_map, service_type_map
+
+T = TypeVar('T')
+U = TypeVar('U')
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +46,7 @@ def dont_throw(func):
 def with_tracer_wrapper(func):
     """Helper for providing tracer for wrapper functions."""
 
-    def _with_tracer(tracer, to_wrap):
+    def _with_tracer(tracer, handler, to_wrap):
         def wrapper(wrapped, instance, args, kwargs):
             token = None
             try:
@@ -53,7 +59,7 @@ def with_tracer_wrapper(func):
             except Exception as e:
                 logger.error("Exception in attaching parent context: %s", e)
 
-            val = func(tracer, to_wrap, wrapped, instance, args, kwargs)
+            val = func(tracer, handler, to_wrap, wrapped, instance, args, kwargs)
             # Detach the token if it was set
             if token:
                 try:
@@ -87,9 +93,8 @@ def load_output_processor(wrapper_method, attributes_config_base_path):
 
         logger.info(f'Absolute file path is: {absolute_file_path}')
         try:
-            with open(absolute_file_path, encoding='UTF-8') as op_file:
-                wrapper_method["output_processor"] = json.load(op_file)
-                logger.info('Output processor loaded successfully.')
+            wrapper_method["output_processor"] = load_config(absolute_file_path)
+            logger.info('Output processor loaded successfully.')
         except FileNotFoundError:
             logger.error(f"Error: File not found at {absolute_file_path}.")
         except JSONDecodeError:
@@ -98,6 +103,22 @@ def load_output_processor(wrapper_method, attributes_config_base_path):
             logger.error(f"Error: An unexpected error occurred: {e}")
     else:
         logger.error("Invalid or missing output processor file path.")
+
+
+def load_config(config_path):
+    #Get just the file name from the absolute path
+    file_name = os.path.basename(config_path)
+    # Strip the .py extension
+    file_name = os.path.splitext(file_name)[0]
+    spec = importlib.util.spec_from_file_location(file_name, config_path)
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+    if file_name=='inference':
+        return config.inference
+    elif file_name =='retrieval':
+        return config.retrieval
+    else:
+        return None
 
 def get_wrapper_methods_config(
         wrapper_methods_config_path: str,
@@ -250,3 +271,35 @@ def get_host_from_map(my_map, keys_to_check):
         if seed_connections and 'host' in seed_connections[0].__dict__:
             return seed_connections[0].__dict__['host']
     return None
+
+
+
+class Option(Generic[T]):
+    def __init__(self, value: Optional[T]):
+        self.value = value
+
+    def is_some(self) -> bool:
+        return self.value is not None
+
+    def is_none(self) -> bool:
+        return self.value is None
+
+    def unwrap_or(self, default: T) -> T:
+        return self.value if self.is_some() else default
+
+    def map(self, func: Callable[[T], U]) -> 'Option[U]':
+        if self.is_some():
+            return Option(func(self.value))
+        return Option(None)
+
+    def and_then(self, func: Callable[[T], 'Option[U]']) -> 'Option[U]':
+        if self.is_some():
+            return func(self.value)
+        return Option(None)
+
+# Example usage
+def try_option(func: Callable[..., T], *args, **kwargs) -> Option[T]:
+    try:
+        return Option(func(*args, **kwargs))
+    except Exception:
+        return Option(None)
