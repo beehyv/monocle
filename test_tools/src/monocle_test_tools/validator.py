@@ -247,6 +247,7 @@ class MonocleValidator:
     async def test_agent_async(self, agent, agent_type:str, test_case:Union[TestCase, dict], session_id:str=None):
         if isinstance(test_case, dict):
             test_case = TestCase.model_validate(test_case)
+        self.cleanup()
         result = None
         try:
             result = await MonocleValidator.run_agent_async(agent, agent_type, *test_case.test_input, session_id=session_id)
@@ -254,11 +255,13 @@ class MonocleValidator:
             if not test_case.expect_errors:
                 raise
         self.validate_result(test_case, result)
+        self.validate(test_case)
         return result
 
     def test_agent(self, agent, agent_type:str, test_case:Union[TestCase, dict]):
         if isinstance(test_case, dict):
             test_case = TestCase.model_validate(test_case)
+        self.cleanup()
         result = None
         try:
             result = MonocleValidator.run_agent(agent, agent_type, *test_case.test_input)
@@ -266,6 +269,7 @@ class MonocleValidator:
             if not test_case.expect_errors:
                 raise
         self.validate_result(test_case, result)
+        self.validate(test_case)
         return result
 
     def _set_wrapper_methods(self, mock_tools: list[MockTool]) -> list[dict]:
