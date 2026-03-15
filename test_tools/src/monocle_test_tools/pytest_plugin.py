@@ -82,6 +82,59 @@ def monocle_trace_asserter(request:pytest.FixtureRequest):
         # Cleanup trace asserter (triggers eval cleanup including trace deletion)
         traceAssertion.cleanup()
 
+@pytest.fixture()
+def monocle_test_case(request:pytest.FixtureRequest):
+    """
+    Fixture for parametrized monocle test cases with automatic setup/teardown.
+
+    Use with indirect parametrize to automatically handle monocle test lifecycle:
+    - Converts dict test cases to TestCase objects
+    - Sets up monocle test context (scopes, mock tools)
+    - Yields the TestCase for the test to use
+    - Validates spans after the test completes
+    - Cleans up and exports results
+
+    Example:
+        agent_test_cases = [
+            {"test_input": ["prompt"], "test_output": "expected", "comparer": "similarity"},
+        ]
+
+        @pytest.mark.parametrize("monocle_test_case", agent_test_cases, indirect=True)
+        async def test_my_agent(monocle_test_case):
+            await MonocleValidator().test_agent_async(agent, "google_adk", monocle_test_case)
+    """
+    from .validator import MonocleValidator
+    from .schema import TestCase
+
+    test_case_data = request.param
+    validator = MonocleValidator()
+    if isinstance(test_case_data, dict):
+        test_case = TestCase.model_validate(test_case_data)
+    else:
+        test_case = test_case_data
+
+    token = validator.pre_test_run_setup(request.node.name, test_case.mock_tools)
+    validation_failed = False
+    validation_error_message = None
+    try:
+        yield test_case
+    except Exception as e:
+        validation_failed = True
+        validation_error_message = str(e)
+        raise
+    finally:
+        try:
+            validator.validate(test_case)
+        except AssertionError as e:
+            if not validation_failed:
+                validation_failed = True
+                validation_error_message = str(e)
+                raise
+        finally:
+            is_test_failed = validation_failed or _is_test_failed(request)
+            validator.post_test_cleanup(token, request.node.name, is_test_failed,
+                                        validation_error_message)
+
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """Capture test reports and modify based on trace assertions."""
