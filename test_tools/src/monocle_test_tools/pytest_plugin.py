@@ -1,7 +1,10 @@
 import os
+import logging
 from datetime import datetime
 import pytest
 from .fluent_api import TraceAssertion
+
+logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session", autouse=True)
 def run_once_at_start_of_session():
@@ -12,6 +15,14 @@ def run_once_at_start_of_session():
     # Set LOCAL_RUN_ID only if not already set (to preserve it across session)
     if "LOCAL_RUN_ID" not in os.environ:
         os.environ["LOCAL_RUN_ID"] = datetime.now().isoformat()
+
+    # Pre-download HuggingFace models so tests can run with local_files_only=True
+    try:
+        from .download_models import download_all
+        download_all()
+    except (OSError, ImportError) as e:
+        logger.warning(f"Failed to pre-download models: {e}")
+
     yield
 
 @pytest.fixture()
